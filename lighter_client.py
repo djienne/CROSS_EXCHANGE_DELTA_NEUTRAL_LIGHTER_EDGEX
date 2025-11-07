@@ -630,3 +630,74 @@ async def lighter_close_position(
     except Exception as e:
         logger.error(f"Lighter: Failed to close position: {e}", exc_info=True)
         return False
+
+
+async def cancel_all_lighter_orders(env: dict) -> bool:
+    """
+    Cancel all open orders on Lighter.
+
+    Args:
+        env: Environment dict with Lighter credentials
+
+    Returns:
+        True if successful, False otherwise
+    """
+    import lighter
+
+    base_url = env.get("LIGHTER_BASE_URL") or env.get("BASE_URL") or "https://mainnet.zklighter.elliot.ai"
+    private_key = env.get("LIGHTER_PRIVATE_KEY") or env.get("API_KEY_PRIVATE_KEY")
+    account_index = int(env.get("LIGHTER_ACCOUNT_INDEX") or env.get("ACCOUNT_INDEX") or "0")
+    api_key_index = int(env.get("LIGHTER_API_KEY_INDEX") or env.get("API_KEY_INDEX") or "0")
+
+    try:
+        logger.info("Lighter: Canceling all open orders...")
+
+        # Create signer client
+        client = lighter.SignerClient(
+            url=base_url,
+            private_key=private_key,
+            api_key_index=api_key_index,
+            account_index=account_index
+        )
+
+        # Cancel all orders (using time=0 as per market_maker_v2.py)
+        tx, tx_hash, err = await client.cancel_all_orders(
+            time_in_force=client.CANCEL_ALL_TIF_IMMEDIATE,
+            time=0
+        )
+
+        if err is not None:
+            logger.error(f"Lighter: Error canceling all orders: {err}")
+            return False
+
+        logger.info(f"Lighter: Successfully canceled all orders: tx_hash={getattr(tx_hash, 'tx_hash', tx_hash) if tx_hash else 'OK'}")
+
+        # Verify by checking account
+        api_client = lighter.ApiClient(lighter.Configuration(host=base_url))
+        account_api = lighter.AccountApi(api_client)
+
+        account_details = await account_api.account(by="index", value=str(account_index))
+
+        total_open_orders = 0
+        if account_details.accounts:
+            acc = account_details.accounts[0]
+            total_open_orders = sum(pos.open_order_count for pos in acc.positions if pos.open_order_count > 0)
+
+            if total_open_orders > 0:
+                logger.warning(f"Lighter: {total_open_orders} orders still exist after cancel:")
+                for pos in acc.positions:
+                    if pos.open_order_count > 0:
+                        logger.warning(f"  {pos.symbol}: {pos.open_order_count} open orders")
+
+        await api_client.close()
+
+        if total_open_orders == 0:
+            logger.info("Lighter: All orders canceled successfully (verified)")
+            return True
+        else:
+            logger.warning(f"Lighter: {total_open_orders} orders remain after cancel")
+            return False
+
+    except Exception as e:
+        logger.error(f"Lighter: Failed to cancel all orders: {e}", exc_info=True)
+        return False

@@ -2023,7 +2023,7 @@ async def _try_open_position(state_mgr: StateManager, env: dict, config: BotConf
             short_exchange=best['short_exch'].lower(),
             leverage=config.leverage,
             notional_quote=actual_notional,
-            cross_ticks=100,
+            cross_ticks=1000,  # Ultra-aggressive to ensure instant fills, prevent stuck orders
         )
     except Exception as exc:
         logger.error(f"{Colors.RED}Failed to open position: {exc}{Colors.RESET}")
@@ -2163,7 +2163,7 @@ async def close_current_position(state_mgr: StateManager, env: dict):
         logger.info(f"  Total: ${pnl_before['total_unrealized_pnl']:.4f}")
 
         # Close position
-        await close_delta_neutral_position(env, pos['symbol'], pos['quote'], cross_ticks=100)
+        await close_delta_neutral_position(env, pos['symbol'], pos['quote'], cross_ticks=1000)  # Ultra-aggressive instant fills
 
         # Wait for settlement
         await asyncio.sleep(2)
@@ -2833,6 +2833,10 @@ class RotationBot:
         if not await recover_state(self.state_mgr, self.env):
             logger.error(f"{Colors.RED}State recovery failed. Exiting.{Colors.RESET}")
             return
+
+        # Cancel all open orders on Lighter at startup to prevent stuck orders from blocking new positions
+        logger.info(f"\n{Colors.CYAN}Canceling any stuck orders on Lighter...{Colors.RESET}")
+        await lighter_client.cancel_all_lighter_orders(self.env)
 
         # Skip initial funding scan if already HOLDING a position (saves API quota)
         current_state = self.state_mgr.get_state()
