@@ -220,6 +220,67 @@ def load_env() -> dict:
 
     return env
 
+
+# ==================== Funding Rate Cache ====================
+
+# Cache structure: {(symbol, quote, exchange): (rate, timestamp)}
+FUNDING_CACHE: Dict[Tuple[str, str, str], Tuple[float, datetime]] = {}
+FUNDING_CACHE_TTL_SECONDS = 300  # 5 minutes default
+
+
+def get_cached_funding(symbol: str, quote: str, exchange: str) -> Optional[float]:
+    """
+    Get funding rate from cache if still valid.
+
+    Args:
+        symbol: Trading symbol (e.g., "BTC")
+        quote: Quote currency (e.g., "USD")
+        exchange: Exchange name ("EdgeX" or "Lighter")
+
+    Returns:
+        Cached funding rate if valid, None otherwise
+    """
+    cache_key = (symbol.upper(), quote.upper(), exchange.lower())
+    if cache_key in FUNDING_CACHE:
+        rate, timestamp = FUNDING_CACHE[cache_key]
+        age_seconds = (utc_now() - timestamp).total_seconds()
+        if age_seconds < FUNDING_CACHE_TTL_SECONDS:
+            logger.debug(
+                f"Using cached funding for {symbol}/{quote} on {exchange} "
+                f"(age: {age_seconds:.1f}s / {FUNDING_CACHE_TTL_SECONDS}s)"
+            )
+            return rate
+        else:
+            logger.debug(
+                f"Cache expired for {symbol}/{quote} on {exchange} "
+                f"(age: {age_seconds:.1f}s > {FUNDING_CACHE_TTL_SECONDS}s)"
+            )
+    return None
+
+
+def set_cached_funding(symbol: str, quote: str, exchange: str, rate: float) -> None:
+    """
+    Store funding rate in cache with current timestamp.
+
+    Args:
+        symbol: Trading symbol (e.g., "BTC")
+        quote: Quote currency (e.g., "USD")
+        exchange: Exchange name ("EdgeX" or "Lighter")
+        rate: Funding rate (decimal, e.g., 0.0001 for 0.01%)
+    """
+    cache_key = (symbol.upper(), quote.upper(), exchange.lower())
+    FUNDING_CACHE[cache_key] = (rate, utc_now())
+    logger.debug(f"Cached funding for {symbol}/{quote} on {exchange}: {rate}")
+
+
+def clear_funding_cache() -> None:
+    """Clear all cached funding rates."""
+    global FUNDING_CACHE
+    cache_size = len(FUNDING_CACHE)
+    FUNDING_CACHE = {}
+    logger.info(f"Cleared funding rate cache ({cache_size} entries)")
+
+
 # ==================== State Management ====================
 
 class BotState:
@@ -656,6 +717,12 @@ async def fetch_symbol_funding(symbol: str, quote: str, env: dict, check_volume:
     lighter_apr: Optional[float] = None
 
     async def fetch_edgex_rate() -> Optional[float]:
+        # Check cache first
+        cached_rate = get_cached_funding(symbol, quote, "EdgeX")
+        if cached_rate is not None:
+            return cached_rate
+
+        # Cache miss - fetch from API
         edgex = None
         try:
             edgex = EdgeXClient(
@@ -666,6 +733,11 @@ async def fetch_symbol_funding(symbol: str, quote: str, env: dict, check_volume:
             contract_name = f"{symbol.upper()}{quote.upper()}"
             contract_id, _, _ = await edgex_client.get_edgex_contract_details(edgex, contract_name)
             rate = await edgex_client.get_edgex_funding_rate(edgex, contract_id)
+
+            # Store in cache if successful
+            if rate is not None:
+                set_cached_funding(symbol, quote, "EdgeX", rate)
+
             return rate
         except Exception as exc:
             logger.error("Error fetching EdgeX funding for %s: %s", symbol, exc)
@@ -675,6 +747,12 @@ async def fetch_symbol_funding(symbol: str, quote: str, env: dict, check_volume:
                 await edgex.close()
 
     async def fetch_lighter_rate() -> Optional[float]:
+        # Check cache first
+        cached_rate = get_cached_funding(symbol, quote, "Lighter")
+        if cached_rate is not None:
+            return cached_rate
+
+        # Cache miss - fetch from API
         api_client = None
         try:
             # Use global semaphore to limit concurrent Lighter API calls
@@ -688,7 +766,13 @@ async def fetch_symbol_funding(symbol: str, quote: str, env: dict, check_volume:
                 async def _fetch():
                     return await lighter_client.get_lighter_funding_rate(funding_api, market_id)
 
-                return await retry_with_backoff(_fetch, max_retries=3, initial_delay=2.0)
+                rate = await retry_with_backoff(_fetch, max_retries=3, initial_delay=2.0)
+
+                # Store in cache if successful
+                if rate is not None:
+                    set_cached_funding(symbol, quote, "Lighter", rate)
+
+                return rate
         except RateLimitError as exc:
             logger.error("Lighter rate limit exceeded for %s after retries: %s", symbol, exc)
             return None
@@ -814,7 +898,7 @@ async def open_delta_neutral_position(
     short_exchange: str,
     leverage: float,
     notional_quote: float,
-    cross_ticks: int = 100,
+    cross_pct: float = 3.0,  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> Dict[str, object]:
     """
     Open a delta-neutral position across Lighter and EdgeX using aggressive limit orders.
@@ -923,9 +1007,8 @@ async def open_delta_neutral_position(
     leg_names: List[str] = []
 
     if long_leg == "lighter":
-        ref_price = lighter_ask if lighter_ask else lighter_bid
-        if ref_price is None:
-            raise RuntimeError("Lighter: No reference price available for long leg.")
+        if lighter_bid is None and lighter_ask is None:
+            raise RuntimeError("Lighter: No market data available for long leg.")
         tasks.append(
             lighter_client.lighter_place_aggressive_order(
                 signer,
@@ -934,15 +1017,15 @@ async def open_delta_neutral_position(
                 l_amount_tick,
                 "buy",
                 size_base,
-                ref_price,
-                cross_ticks=cross_ticks,
+                lighter_bid,
+                lighter_ask,
+                cross_pct=cross_pct,
             )
         )
         leg_names.append("Lighter (LONG)")
     elif long_leg == "edgex":
-        ref_price = edgex_ask if edgex_ask else edgex_bid
-        if ref_price is None:
-            raise RuntimeError("EdgeX: No reference price available for long leg.")
+        if edgex_bid is None and edgex_ask is None:
+            raise RuntimeError("EdgeX: No market data available for long leg.")
         tasks.append(
             edgex_client.place_aggressive_order(
                 edgex,
@@ -951,8 +1034,8 @@ async def open_delta_neutral_position(
                 e_step_size,
                 "buy",
                 size_base,
-                ref_price,
-                cross_ticks=cross_ticks,
+                None,  # ref_price no longer used
+                cross_pct=cross_pct,
             )
         )
         leg_names.append("EdgeX (LONG)")
@@ -960,9 +1043,8 @@ async def open_delta_neutral_position(
         raise RuntimeError(f"Unsupported long exchange: {long_exchange}")
 
     if short_leg == "lighter":
-        ref_price = lighter_bid if lighter_bid else lighter_ask
-        if ref_price is None:
-            raise RuntimeError("Lighter: No reference price available for short leg.")
+        if lighter_bid is None and lighter_ask is None:
+            raise RuntimeError("Lighter: No market data available for short leg.")
         tasks.append(
             lighter_client.lighter_place_aggressive_order(
                 signer,
@@ -971,15 +1053,15 @@ async def open_delta_neutral_position(
                 l_amount_tick,
                 "sell",
                 size_base,
-                ref_price,
-                cross_ticks=cross_ticks,
+                lighter_bid,
+                lighter_ask,
+                cross_pct=cross_pct,
             )
         )
         leg_names.append("Lighter (SHORT)")
     elif short_leg == "edgex":
-        ref_price = edgex_bid if edgex_bid else edgex_ask
-        if ref_price is None:
-            raise RuntimeError("EdgeX: No reference price available for short leg.")
+        if edgex_bid is None and edgex_ask is None:
+            raise RuntimeError("EdgeX: No market data available for short leg.")
         tasks.append(
             edgex_client.place_aggressive_order(
                 edgex,
@@ -988,8 +1070,8 @@ async def open_delta_neutral_position(
                 e_step_size,
                 "sell",
                 size_base,
-                ref_price,
-                cross_ticks=cross_ticks,
+                None,  # ref_price no longer used
+                cross_pct=cross_pct,
             )
         )
         leg_names.append("EdgeX (SHORT)")
@@ -1010,6 +1092,57 @@ async def open_delta_neutral_position(
         if successful:
             print("\n⚠️  CRITICAL: Partial fill detected!")
             print(f"   Successfully opened on: {', '.join(successful)}")
+            print("🔄 Automatically rolling back successful leg(s)...")
+
+            # Close any successful positions to prevent orphaned exposure
+            rollback_tasks = []
+            for idx, result in enumerate(results):
+                if not isinstance(result, Exception):
+                    leg_name = leg_names[idx]
+
+                    # Determine which exchange and side for this leg
+                    if "Lighter" in leg_name:
+                        # Close Lighter position
+                        # Need to determine close side: "sell" to close long, "buy" to close short
+                        close_side = "sell" if "LONG" in leg_name else "buy"
+
+                        print(f"   Rolling back {leg_name}: placing {close_side} order...")
+                        rollback_tasks.append(
+                            lighter_client.lighter_close_position(
+                                signer=signer,
+                                market_id=l_market_id,
+                                price_tick=l_price_tick,
+                                amount_tick=l_amount_tick,
+                                side=close_side,
+                                size_base=size_base,
+                                bid=lighter_bid,
+                                ask=lighter_ask,
+                                cross_pct=cross_pct
+                            )
+                        )
+                    elif "EdgeX" in leg_name:
+                        # Close EdgeX position
+                        print(f"   Rolling back {leg_name}: closing position...")
+                        rollback_tasks.append(
+                            edgex_client.close_position(
+                                client=edgex,
+                                contract_id=e_contract_id,
+                                tick_size=e_tick_price,
+                                step_size=e_step_size,
+                                cross_pct=cross_pct
+                            )
+                        )
+
+            # Execute all rollback operations
+            if rollback_tasks:
+                try:
+                    await asyncio.gather(*rollback_tasks)
+                    print("✓ Rollback completed - orphaned positions closed")
+                    await asyncio.sleep(1)  # Give exchanges time to process
+                except Exception as rollback_err:
+                    print(f"⚠️  WARNING: Rollback encountered error: {rollback_err}")
+                    print("   Manual intervention may be required to close orphaned positions!")
+
         await signer.close()
         await api_client.close()
         await edgex.close()
@@ -1054,7 +1187,7 @@ async def close_delta_neutral_position(
     env: dict,
     symbol: str,
     quote: str,
-    cross_ticks: int = 100,
+    cross_pct: float = 3.0,  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> None:
     """Close positions on both exchanges for the specified symbol."""
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
@@ -1101,8 +1234,7 @@ async def close_delta_neutral_position(
 
     if abs(lighter_size) > l_amount_tick:
         lighter_close_side = "sell" if lighter_size > 0 else "buy"
-        ref_price = lighter_bid if lighter_close_side == "sell" else lighter_ask
-        if ref_price:
+        if lighter_bid or lighter_ask:
             tasks.append(
                 lighter_client.lighter_close_position(
                     signer,
@@ -1111,13 +1243,14 @@ async def close_delta_neutral_position(
                     l_amount_tick,
                     lighter_close_side,
                     abs(lighter_size),
-                    ref_price,
-                    cross_ticks=cross_ticks,
+                    lighter_bid,
+                    lighter_ask,
+                    cross_pct=cross_pct,
                 )
             )
         else:
-            logger.warning("Lighter: No reference price available to close position.")
-            print("  Lighter: No reference price available, cannot send close order.")
+            logger.warning("Lighter: No market data available to close position.")
+            print("  Lighter: No market data available, cannot send close order.")
     else:
         print("  Lighter: Position already flat or below minimum tick.")
 
@@ -1127,7 +1260,7 @@ async def close_delta_neutral_position(
             e_contract_id,
             e_tick_price,
             e_step_size,
-            cross_ticks=cross_ticks,
+            cross_pct=cross_pct,
         )
     )
 
@@ -2023,7 +2156,7 @@ async def _try_open_position(state_mgr: StateManager, env: dict, config: BotConf
             short_exchange=best['short_exch'].lower(),
             leverage=config.leverage,
             notional_quote=actual_notional,
-            cross_ticks=1000,  # Ultra-aggressive to ensure instant fills, prevent stuck orders
+            cross_pct=3.0,  # 3% from mid price, well under 5% exchange limit (Lighter rejects 5%)
         )
     except Exception as exc:
         logger.error(f"{Colors.RED}Failed to open position: {exc}{Colors.RESET}")
@@ -2163,7 +2296,7 @@ async def close_current_position(state_mgr: StateManager, env: dict):
         logger.info(f"  Total: ${pnl_before['total_unrealized_pnl']:.4f}")
 
         # Close position
-        await close_delta_neutral_position(env, pos['symbol'], pos['quote'], cross_ticks=1000)  # Ultra-aggressive instant fills
+        await close_delta_neutral_position(env, pos['symbol'], pos['quote'], cross_pct=3.0)  # 3% from mid, under 5% limit
 
         # Wait for settlement
         await asyncio.sleep(2)

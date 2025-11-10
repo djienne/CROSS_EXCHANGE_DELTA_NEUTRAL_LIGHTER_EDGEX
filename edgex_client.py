@@ -57,26 +57,39 @@ def cross_price(
     ref_bid: Optional[float],
     ref_ask: Optional[float],
     tick: float,
-    cross_ticks: int = 100,
+    cross_pct: float = 3.0,  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> float:
     """
-    Return an aggressive price that crosses the spread by at least `cross_ticks`.
-    - BUY orders cross above the ask; SELL orders cross below the bid.
-    Falls back to whichever side is available if either bid/ask is missing.
+    Return an aggressive price based on percentage from mid price.
+    - BUY orders: mid * (1 + cross_pct/100)
+    - SELL orders: mid * (1 - cross_pct/100)
+    Falls back to available prices if bid/ask is missing.
+
+    Args:
+        side: "buy" or "sell"
+        ref_bid: Best bid price
+        ref_ask: Best ask price
+        tick: Tick size for rounding
+        cross_pct: Percentage to cross from mid price (default 5%)
     """
-    cross_ticks = max(1, int(cross_ticks))
-    if side == "buy":
-        if ref_ask is not None:
-            return _ceil_to_tick(ref_ask + cross_ticks * tick, tick)
-        if ref_bid is not None:
-            return _ceil_to_tick(ref_bid + cross_ticks * tick, tick)
+    # Calculate mid price
+    if ref_bid is not None and ref_ask is not None:
+        mid = (ref_bid + ref_ask) / 2.0
+    elif ref_ask is not None:
+        mid = ref_ask
+    elif ref_bid is not None:
+        mid = ref_bid
     else:
-        if ref_bid is not None:
-            return _floor_to_tick(ref_bid - cross_ticks * tick, tick)
-        if ref_ask is not None:
-            return _floor_to_tick(ref_ask - cross_ticks * tick, tick)
-    ref = ref_ask if ref_ask is not None else ref_bid
-    return _round_to_tick(ref, tick) if ref is not None else 0.0
+        return 0.0
+
+    # Apply percentage adjustment
+    cross_pct = max(0.0, cross_pct)  # Ensure non-negative
+    if side == "buy":
+        price = mid * (1.0 + cross_pct / 100.0)
+        return _ceil_to_tick(price, tick)
+    else:  # sell
+        price = mid * (1.0 - cross_pct / 100.0)
+        return _floor_to_tick(price, tick)
 
 
 # ==================== Market Metadata ====================
@@ -336,17 +349,24 @@ async def place_aggressive_order(
     side: str,
     size_base: float,
     ref_price: float,
-    cross_ticks: int = 100,
+    cross_pct: float = 3.0,  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> Dict:
     """
     Place an aggressive limit order that crosses the spread to emulate a market order.
+    Uses percentage-based pricing from mid price for consistent execution across all assets.
     """
+    # Get current bid/ask for mid price calculation
+    bid, ask = await get_edgex_best_bid_ask(client, contract_id)
+
+    # Calculate mid for logging
+    mid = (bid + ask) / 2.0 if (bid and ask) else (bid or ask or ref_price)
+
     price = cross_price(
         side,
-        ref_bid=ref_price if side == "sell" else None,
-        ref_ask=ref_price if side == "buy" else None,
+        bid,
+        ask,
         tick=tick_size,
-        cross_ticks=cross_ticks,
+        cross_pct=cross_pct,
     )
     size = _round_to_tick(size_base, step_size)
 
@@ -360,12 +380,12 @@ async def place_aggressive_order(
     )
     metadata = await client.get_metadata()
     logger.info(
-        "EdgeX order: side=%s size=%s price=%s (ref=%s cross_ticks=%s)",
+        "EdgeX order: side=%s size=%s price=%s (mid=%.2f cross_pct=%.1f%%)",
         side,
         size,
         price,
-        ref_price,
-        cross_ticks,
+        mid,
+        cross_pct,
     )
     return await client.order.create_order(params, metadata.get("data", {}))
 
@@ -375,7 +395,7 @@ async def close_position(
     contract_id: str,
     tick_size: float,
     step_size: float,
-    cross_ticks: int = 100,
+    cross_pct: float = 3.0,  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> Optional[str]:
     """
     Close an open EdgeX position by placing an offsetting aggressive order.
@@ -405,7 +425,7 @@ async def close_position(
         side,
         abs(size),
         ref_price,
-        cross_ticks=cross_ticks,
+        cross_pct=cross_pct,
     )
     if resp.get("code") == "SUCCESS":
         return resp.get("data", {}).get("orderId")

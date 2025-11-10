@@ -48,28 +48,38 @@ def _floor_to_tick(value: float, tick: float) -> float:
     return float((d_value / d_tick).quantize(Decimal('1'), rounding=ROUND_DOWN) * d_tick)
 
 
-def cross_price(side: str, ref_bid: Optional[float], ref_ask: Optional[float], tick: float, cross_ticks: int = 100) -> float:
+def cross_price(side: str, ref_bid: Optional[float], ref_ask: Optional[float], tick: float, cross_pct: float = 3.0) -> float:
     """
-    Return an aggressive price that crosses the spread by at least `cross_ticks`.
-    - For BUY: price >= best_ask + cross_ticks*tick
-    - For SELL: price <= best_bid - cross_ticks*tick
-    Falls back to using the other side if bid/ask is missing.
+    Return an aggressive price based on percentage from mid price.
+    - BUY orders: mid * (1 + cross_pct/100)
+    - SELL orders: mid * (1 - cross_pct/100)
+    Falls back to available prices if bid/ask is missing.
+
+    Args:
+        side: "buy" or "sell"
+        ref_bid: Best bid price
+        ref_ask: Best ask price
+        tick: Tick size for rounding
+        cross_pct: Percentage to cross from mid price (default 3%, well under 5% exchange limit)
     """
-    cross_ticks = max(1, int(cross_ticks))
+    # Calculate mid price
+    if ref_bid is not None and ref_ask is not None:
+        mid = (ref_bid + ref_ask) / 2.0
+    elif ref_ask is not None:
+        mid = ref_ask
+    elif ref_bid is not None:
+        mid = ref_bid
+    else:
+        return 0.0
+
+    # Apply percentage adjustment
+    cross_pct = max(0.0, cross_pct)  # Ensure non-negative
     if side == "buy":
-        if ref_ask:
-            return _ceil_to_tick(ref_ask + cross_ticks * tick, tick)
-        elif ref_bid:
-            # If only bid available, still step above it
-            return _ceil_to_tick(ref_bid + cross_ticks * tick, tick)
+        price = mid * (1.0 + cross_pct / 100.0)
+        return _ceil_to_tick(price, tick)
     else:  # sell
-        if ref_bid:
-            return _floor_to_tick(ref_bid - cross_ticks * tick, tick)
-        elif ref_ask:
-            # If only ask available, still step below it
-            return _floor_to_tick(ref_ask - cross_ticks * tick, tick)
-    # As a last resort just return the reference rounded
-    return _round_to_tick(ref_ask if ref_ask else ref_bid, tick)
+        price = mid * (1.0 - cross_pct / 100.0)
+        return _floor_to_tick(price, tick)
 
 
 class LighterOrderBookFetcher:
@@ -486,11 +496,13 @@ async def lighter_place_aggressive_order(
     amount_tick: float,
     side: str,  # "buy" or "sell"
     size_base: float,
-    ref_price: float,
-    cross_ticks: int = 100
+    bid: Optional[float],
+    ask: Optional[float],
+    cross_pct: float = 3.0  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> Optional[str]:
     """
     Place an aggressive limit order that crosses the spread to emulate a market order.
+    Uses percentage-based pricing from mid price for consistent execution across all assets.
 
     Args:
         signer: Lighter SignerClient
@@ -499,31 +511,35 @@ async def lighter_place_aggressive_order(
         amount_tick: Minimum size increment
         side: "buy" or "sell"
         size_base: Order size in base currency (should already be rounded to tick)
-        ref_price: Reference price (ask for buy, bid for sell)
-        cross_ticks: Number of ticks to cross the spread (default 100)
+        bid: Best bid price
+        ask: Best ask price
+        cross_pct: Percentage from mid price (default 5%)
 
     Returns:
         Order ID if successful, None otherwise
     """
     try:
-        if ref_price is None:
-            logger.error(f"Lighter: ref_price is None for {side} order")
+        if bid is None and ask is None:
+            logger.error(f"Lighter: both bid and ask are None for {side} order")
             return None
 
-        # Calculate aggressive price that crosses the spread
+        # Calculate mid price for logging
+        mid = (bid + ask) / 2.0 if (bid and ask) else (bid or ask)
+
+        # Calculate aggressive price that crosses from mid
         px = cross_price(
             side,
-            ref_bid=None if side == 'buy' else ref_price,
-            ref_ask=ref_price if side == 'buy' else None,
+            ref_bid=bid,
+            ref_ask=ask,
             tick=price_tick,
-            cross_ticks=cross_ticks
+            cross_pct=cross_pct
         )
 
         # Size should already be rounded - just scale to integer units
         base_scaled = int(round(size_base / amount_tick))
         price_scaled = int(px / price_tick)
 
-        logger.info(f"Lighter order: {side} {base_scaled} units @ {price_scaled} scaled ({px:.4f} actual)")
+        logger.info(f"Lighter order: {side} {base_scaled} units @ {price_scaled} scaled ({px:.4f} actual, mid={mid:.2f}, cross_pct={cross_pct:.1f}%)")
 
         client_order_id = int(asyncio.get_running_loop().time() * 1_000_000) % 1_000_000
 
@@ -559,11 +575,13 @@ async def lighter_close_position(
     amount_tick: float,
     side: str,  # "buy" to close short, "sell" to close long
     size_base: float,
-    ref_price: float,
-    cross_ticks: int = 100
+    bid: Optional[float],
+    ask: Optional[float],
+    cross_pct: float = 3.0  # Percentage from mid price (default 3%, well under 5% exchange limit)
 ) -> bool:
     """
     Close a position with a reduce-only aggressive limit order.
+    Uses percentage-based pricing from mid price for consistent execution across all assets.
 
     Args:
         signer: Lighter SignerClient
@@ -572,34 +590,38 @@ async def lighter_close_position(
         amount_tick: Minimum size increment
         side: "buy" to close short, "sell" to close long
         size_base: Position size to close (absolute value)
-        ref_price: Reference price (ask for buy, bid for sell)
-        cross_ticks: Number of ticks to cross the spread (default 100)
+        bid: Best bid price
+        ask: Best ask price
+        cross_pct: Percentage from mid price (default 5%)
 
     Returns:
         True if order placed successfully, False otherwise
     """
     logger.info("--- lighter_close_position called ---")
-    logger.info(f"Inputs: market_id={market_id}, price_tick={price_tick}, amount_tick={amount_tick}, side='{side}', size_base={size_base}, ref_price={ref_price}, cross_ticks={cross_ticks}")
+    logger.info(f"Inputs: market_id={market_id}, price_tick={price_tick}, amount_tick={amount_tick}, side='{side}', size_base={size_base}, bid={bid}, ask={ask}, cross_pct={cross_pct}")
 
     try:
-        if ref_price is None:
-            logger.error("Lighter close failed: ref_price is None.")
+        if bid is None and ask is None:
+            logger.error("Lighter close failed: both bid and ask are None.")
             return False
+
+        # Calculate mid price for logging
+        mid = (bid + ask) / 2.0 if (bid and ask) else (bid or ask)
 
         # Use a large size so reduce-only will close whatever position exists
         base_scaled = int(round(size_base / amount_tick))
 
-        # For a closing order, we want to cross the spread to get filled
+        # For a closing order, we want to cross from mid price to get filled
         px = cross_price(
             side,
-            ref_bid=None if side == 'buy' else ref_price,
-            ref_ask=ref_price if side == 'buy' else None,
+            ref_bid=bid,
+            ref_ask=ask,
             tick=price_tick,
-            cross_ticks=cross_ticks
+            cross_pct=cross_pct
         )
         price_scaled = int(px / price_tick)
 
-        logger.info(f"Calculated values: base_scaled={base_scaled}, aggressive_price={px}, price_scaled={price_scaled}")
+        logger.info(f"Calculated values: base_scaled={base_scaled}, aggressive_price={px}, price_scaled={price_scaled}, mid={mid:.2f}, cross_pct={cross_pct:.1f}%")
 
         order_id = int(asyncio.get_running_loop().time() * 1_000_000) % 1_000_000
 
