@@ -685,7 +685,6 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
         # Cancel all orders (using time=0 as per market_maker_v2.py)
         tx, tx_hash, err = await client.cancel_all_orders(
             time_in_force=client.CANCEL_ALL_TIF_IMMEDIATE,
-            time=0,
             timestamp_ms=int(time.time() * 1000)
         )
 
