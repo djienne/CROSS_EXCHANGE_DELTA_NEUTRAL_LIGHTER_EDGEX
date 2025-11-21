@@ -1,0 +1,11 @@
+.env
+.env.example
+__pycache__/
+*.log
+*.pyc
+.vscode/
+.idea/
+venv/
+env/
+bot_config.json
+bot_state.json
