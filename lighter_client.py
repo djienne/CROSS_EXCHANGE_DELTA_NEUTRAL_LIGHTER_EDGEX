@@ -8,6 +8,7 @@ Lighter exchange connector with helper functions for balance, positions, and ord
 import asyncio
 import json
 import logging
+import time
 from decimal import Decimal, ROUND_DOWN, ROUND_UP, ROUND_HALF_UP
 from typing import Dict, Optional, Tuple
 
@@ -684,7 +685,8 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
         # Cancel all orders (using time=0 as per market_maker_v2.py)
         tx, tx_hash, err = await client.cancel_all_orders(
             time_in_force=client.CANCEL_ALL_TIF_IMMEDIATE,
-            time=0
+            time=0,
+            timestamp_ms=int(time.time() * 1000)
         )
 
         if err is not None:
