@@ -1,0 +1,24 @@
+version: '3.8'
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.58.96.0/22
+services:
+  lighter_edgex_hedge:
+    build: .
+    command: sh -c "timeout 14400 python -u lighter_edgex_hedge.py"
+    volumes:
+      - ./:/app/
+    env_file:
+      - .env
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: '512M'
+    environment:
+      - BOT_STATE_FILE=/app/logs/bot_state.json
+      - PYTHONUNBUFFERED=1

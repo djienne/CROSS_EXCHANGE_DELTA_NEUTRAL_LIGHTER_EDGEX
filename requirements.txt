@@ -1,0 +1,8 @@
+python-dotenv
+edgex-python-sdk
+websockets
+aiohttp
+git+https://github.com/elliottech/lighter-python.git
+numpy
+pandas
+scipy

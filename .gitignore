@@ -1,5 +1,5 @@
 .env
-.env.example
+
 __pycache__/
 *.log
 *.pyc
