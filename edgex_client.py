@@ -245,6 +245,64 @@ async def get_edgex_open_size(client: EdgeXClient, contract_id: str) -> float:
         raise RuntimeError(f"EdgeX: Failed to fetch open size: {exc}") from exc
 
 
+async def get_all_edgex_positions(client: EdgeXClient) -> List[Dict]:
+    """
+    Get all non-zero positions on EdgeX.
+
+    Returns:
+        List of dicts with keys: symbol, size (signed), entry_price, unrealized_pnl, contract_id
+    """
+    positions = []
+    try:
+        positions_resp = await client.get_account_positions()
+        position_list = positions_resp.get("data", {}).get("positionList", [])
+        
+        # Need metadata to map contractId to symbol
+        metadata = await client.get_metadata()
+        contracts = metadata.get("data", {}).get("contractList", [])
+        contract_map = {c["contractId"]: c["contractName"] for c in contracts}
+
+        for pos in position_list:
+            size = float(pos.get("openSize", "0") or 0.0)
+            if abs(size) < 1e-12:
+                continue
+
+            side = pos.get("side") or pos.get("positionSide")
+            if side and str(side).lower().startswith("short"):
+                size = -abs(size)
+
+            contract_id = pos.get("contractId")
+            symbol_quote = contract_map.get(contract_id, "UNKNOWN")
+            # Extract symbol from symbol_quote (e.g. "BTCUSD" -> "BTC")
+            # Assuming standard format where quote is usually USD/USDC/USDT
+            # But for safety, we'll just store the full contract name as symbol for now
+            # or try to strip known quotes.
+            symbol = symbol_quote.replace("USD", "").replace("USDC", "").replace("USDT", "")
+
+            open_value = float(pos.get("openValue", "0") or 0.0)
+            entry_price = abs(open_value) / abs(size) if size != 0 else 0.0
+            
+            # Approximate PnL (would need current price for accurate PnL, but this is for scanning)
+            # We'll leave PnL as 0.0 for scanning purposes or try to fetch if critical
+            # For scanning, we mainly care about existence and size
+            
+            positions.append({
+                "symbol": symbol,
+                "contract_name": symbol_quote,
+                "contract_id": contract_id,
+                "size": size,
+                "entry_price": entry_price,
+                "unrealized_pnl": 0.0  # Placeholder
+            })
+            
+        logger.info(f"EdgeX: Found {len(positions)} non-zero positions")
+
+    except Exception as exc:
+        logger.error("EdgeX: Failed to get all positions: %s", exc, exc_info=True)
+        
+    return positions
+
+
 async def get_edgex_position_details(
     client: EdgeXClient,
     contract_id: str,

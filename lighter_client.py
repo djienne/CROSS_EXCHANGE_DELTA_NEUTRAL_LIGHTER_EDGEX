@@ -443,6 +443,7 @@ async def get_all_lighter_positions(account_api, account_index: int) -> list:
             if abs(signed_size) > 1e-8:
                 positions.append({
                     'symbol': pos.symbol if hasattr(pos, 'symbol') else 'UNKNOWN',
+                    'market_id': pos.market_id if hasattr(pos, 'market_id') else 0,
                     'size': signed_size,
                     'entry_price': float(pos.avg_entry_price or "0") if hasattr(pos, 'avg_entry_price') else 0.0,
                     'unrealized_pnl': float(pos.unrealized_pnl or "0") if hasattr(pos, 'unrealized_pnl') else 0.0

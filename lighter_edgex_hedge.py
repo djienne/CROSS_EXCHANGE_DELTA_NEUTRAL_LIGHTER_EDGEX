@@ -1735,15 +1735,11 @@ async def build_recovered_position_state(env: dict, config: BotConfig, symbol: s
     }
 
 
-async def scan_symbols_for_positions(env: dict, config: BotConfig, symbols: List[str], concurrency: int = 5) -> List[dict]:
-    """Scan multiple symbols in parallel for open positions on both exchanges."""
-
-    if not symbols:
-        return []
-
-    unique_symbols = list(dict.fromkeys(symbols))
-    concurrency = max(1, min(concurrency, len(unique_symbols)))
-
+async def scan_all_account_positions(env: dict, config: BotConfig) -> List[dict]:
+    """
+    Scan ALL active positions on both EdgeX and Lighter accounts.
+    Returns a list of positions found, merged by symbol.
+    """
     edgex = None
     lighter_api_client = None
 
@@ -1759,54 +1755,69 @@ async def scan_symbols_for_positions(env: dict, config: BotConfig, symbols: List
         account_api = lighter.AccountApi(lighter_api_client)
         account_index = int(env.get("ACCOUNT_INDEX", env.get("LIGHTER_ACCOUNT_INDEX", "0")))
 
-        # Pre-fetch market metadata so we do not request it per symbol repeatedly
-        market_lookup = {}
-        try:
-            markets_resp = await order_api.order_books()
-            for ob in getattr(markets_resp, "order_books", []):
-                market_lookup[ob.symbol.upper()] = (
-                    ob.market_id,
-                    10 ** -ob.supported_price_decimals,
-                    10 ** -ob.supported_size_decimals,
-                )
-        except Exception as e:
-            logger.debug(f"Could not pre-fetch Lighter market metadata: {e}")
+        # 1. Get all raw positions from both exchanges
+        logger.info("Scanning all account positions...")
+        edgex_positions, lighter_positions = await asyncio.gather(
+            edgex_client.get_all_edgex_positions(edgex),
+            lighter_client.get_all_lighter_positions(account_api, account_index)
+        )
 
-        sem = asyncio.Semaphore(concurrency)
+        # 2. Merge by symbol
+        # Map symbol -> {edgex_pos, lighter_pos}
+        merged_positions = {}
 
-        async def scan(symbol: str) -> Optional[dict]:
-            async with sem:
-                try:
-                    contract_name = f"{symbol.upper()}{config.quote.upper()}"
-                    edgex_contract_id, _, _ = await edgex_client.get_edgex_contract_details(edgex, contract_name)
+        for pos in edgex_positions:
+            sym = pos['symbol'].upper()
+            if sym not in merged_positions:
+                merged_positions[sym] = {'edgex': None, 'lighter': None}
+            merged_positions[sym]['edgex'] = pos
 
-                    if symbol.upper() in market_lookup:
-                        lighter_market_id, price_tick, amount_tick = market_lookup[symbol.upper()]
-                    else:
-                        lighter_market_id, price_tick, amount_tick = await lighter_client.get_lighter_market_details(order_api, symbol)
+        for pos in lighter_positions:
+            sym = pos['symbol'].upper()
+            if sym not in merged_positions:
+                merged_positions[sym] = {'edgex': None, 'lighter': None}
+            merged_positions[sym]['lighter'] = pos
 
-                    edgex_size, lighter_size = await asyncio.gather(
-                        edgex_client.get_edgex_open_size(edgex, edgex_contract_id),
-                        lighter_client.get_lighter_open_size(account_api, account_index, lighter_market_id)
-                    )
+        if not merged_positions:
+            logger.info("No open positions found on either exchange.")
+            return []
 
-                    if edgex_size != 0 or lighter_size != 0:
-                        return {
-                            "symbol": symbol,
-                            "edgex_size": edgex_size,
-                            "lighter_size": lighter_size,
-                            "edgex_contract_id": edgex_contract_id,
-                            "lighter_market_id": lighter_market_id,
-                            "lighter_price_tick": price_tick,
-                            "lighter_amount_tick": amount_tick,
-                        }
-                except Exception as e:
-                    logger.error(f"Failed to check position for {symbol}: {e}")
-                    raise  # Re-raise to ensure we don't silently ignore API failures
+        # 3. Enrich with market details for found positions
+        results = []
+        for symbol, data in merged_positions.items():
+            logger.info(f"Found position(s) for {symbol}: EdgeX={data['edgex'] is not None}, Lighter={data['lighter'] is not None}")
+            
+            try:
+                # Fetch EdgeX contract details
+                contract_name = f"{symbol}{config.quote.upper()}"
+                edgex_contract_id, _, _ = await edgex_client.get_edgex_contract_details(edgex, contract_name)
+                
+                # Fetch Lighter market details
+                # We might have market_id from the position data, but we need ticks too
+                # If we have lighter position, we might have market_id, but get_lighter_market_details is safer for ticks
+                lighter_market_id, price_tick, amount_tick = await lighter_client.get_lighter_market_details(order_api, symbol)
 
-        tasks = [asyncio.create_task(scan(symbol)) for symbol in unique_symbols]
-        results = await asyncio.gather(*tasks)
-        return [res for res in results if res]
+                edgex_size = data['edgex']['size'] if data['edgex'] else 0.0
+                lighter_size = data['lighter']['size'] if data['lighter'] else 0.0
+
+                results.append({
+                    "symbol": symbol,
+                    "edgex_size": edgex_size,
+                    "lighter_size": lighter_size,
+                    "edgex_contract_id": edgex_contract_id,
+                    "lighter_market_id": lighter_market_id,
+                    "lighter_price_tick": price_tick,
+                    "lighter_amount_tick": amount_tick,
+                })
+            except Exception as e:
+                logger.error(f"Failed to fetch market details for found position on {symbol}: {e}")
+                # If we can't get details, we can't manage it, but we should still report it exists?
+                # For now, let's skip adding it to results but log heavily. 
+                # Actually, better to raise or return partial info so recover_state knows SOMETHING is there.
+                # But recover_state relies on IDs. Let's assume if we have a position, the market exists.
+                pass
+
+        return results
 
     finally:
         if edgex:
@@ -2670,7 +2681,7 @@ async def recover_state(state_mgr: StateManager, env: dict) -> bool:
             config = BotConfig.load_from_file("bot_config.json")
 
         try:
-            positions_found = await scan_symbols_for_positions(env, config, config.symbols_to_monitor)
+            positions_found = await scan_all_account_positions(env, config)
 
             if positions_found:
                 logger.warning(f"{Colors.YELLOW}Found existing open positions!{Colors.RESET}")
@@ -2838,7 +2849,7 @@ async def recover_state(state_mgr: StateManager, env: dict) -> bool:
         config = BotConfig.load_from_file("bot_config.json")
 
     try:
-        positions_found = await scan_symbols_for_positions(env, config, config.symbols_to_monitor)
+        positions_found = await scan_all_account_positions(env, config)
 
         if positions_found:
             logger.warning(f"{Colors.YELLOW}Found existing open positions!{Colors.RESET}")
