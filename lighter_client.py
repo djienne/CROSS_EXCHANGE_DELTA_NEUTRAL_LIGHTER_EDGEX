@@ -675,12 +675,12 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
     try:
         logger.info("Lighter: Canceling all open orders...")
 
-        # Create signer client using positional args (GitHub SDK signature)
-        # Trying: SignerClient(url, account_index, api_private_keys, api_key_index)
+        # Create signer client using positional args
+        # Official SDK docs: SignerClient(url, private_key, account_index, api_key_index)
         client = lighter.SignerClient(
             base_url,
-            account_index,
             private_key,
+            account_index,
             api_key_index
         )
 
