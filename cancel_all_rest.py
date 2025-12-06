@@ -26,12 +26,12 @@ print("="*70)
 async def cancel_all_via_rest():
     """Cancel all orders using REST API endpoint"""
     try:
-        # Official SDK docs: SignerClient(url, private_key, account_index, api_key_index)
+        # Official SDK docs: SignerClient(url, account_index, api_private_keys, ...)
+        # Using keyword args for the updated SDK
         client = lighter.SignerClient(
-            base_url,
-            private_key,
-            account_index,
-            api_key_index
+            url=base_url,
+            account_index=account_index,
+            api_private_keys={api_key_index: private_key}
         )
 
         # Create authentication token

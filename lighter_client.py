@@ -675,19 +675,19 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
     try:
         logger.info("Lighter: Canceling all open orders...")
 
-        # Create signer client using positional args
-        # Official SDK docs: SignerClient(url, private_key, account_index, api_key_index)
+        # Create signer client using keyword args for the NEW updated SDK signature
+        # Verified signature: (url, account_index, api_private_keys, nonce_management_type)
         client = lighter.SignerClient(
-            base_url,
-            private_key,
-            account_index,
-            api_key_index
+            url=base_url,
+            account_index=account_index,
+            api_private_keys={api_key_index: private_key}
         )
 
         # Cancel all orders (using time=0 as per market_maker_v2.py)
+        # For CANCEL_ALL_TIF_IMMEDIATE, timestamp_ms must be 0 (nil)
         tx, tx_hash, err = await client.cancel_all_orders(
             time_in_force=client.CANCEL_ALL_TIF_IMMEDIATE,
-            timestamp_ms=int(time.time() * 1000)
+            timestamp_ms=0
         )
 
         if err is not None:
