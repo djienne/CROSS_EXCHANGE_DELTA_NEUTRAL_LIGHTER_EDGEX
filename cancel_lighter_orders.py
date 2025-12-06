@@ -22,12 +22,12 @@ print("="*70)
 async def cancel_all_lighter_orders():
     """Cancel all open orders on Lighter"""
     try:
-        # Create signer client using positional args (GitHub SDK doesn't support keyword args)
+        # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
         client = lighter.SignerClient(
-            base_url,      # url
-            private_key,   # api_private_keys
-            account_index, # account_index
-            api_key_index  # api_key_index
+            base_url,
+            account_index,
+            api_key_index,
+            private_key
         )
 
         print("Canceling all open orders...")

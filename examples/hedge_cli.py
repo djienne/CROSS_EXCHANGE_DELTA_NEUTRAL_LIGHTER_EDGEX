@@ -779,12 +779,12 @@ async def compute_max_delta_neutral_size(cfg: AppConfig, env: dict) -> dict:
     # Build clients
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
-    # Use positional args for GitHub SDK (doesn't support keyword args)
+    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
     signer = lighter.SignerClient(
-        env["LIGHTER_BASE_URL"],         # url
-        env["API_KEY_PRIVATE_KEY"],      # api_private_keys
-        int(env["ACCOUNT_INDEX"]),       # account_index
-        int(env["API_KEY_INDEX"])        # api_key_index
+        env["LIGHTER_BASE_URL"],
+        int(env["ACCOUNT_INDEX"]),
+        int(env["API_KEY_INDEX"]),
+        env["API_KEY_PRIVATE_KEY"]
     )
     # EdgeX client
     edgex = EdgeXClient(
@@ -856,12 +856,12 @@ async def open_hedge(cfg: AppConfig, env: dict, size_base: Optional[float], size
     # Lighter clients
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
-    # Use positional args for GitHub SDK (doesn't support keyword args)
+    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
     signer = lighter.SignerClient(
-        env["LIGHTER_BASE_URL"],         # url
-        env["API_KEY_PRIVATE_KEY"],      # api_private_keys
-        int(env["ACCOUNT_INDEX"]),       # account_index
-        int(env["API_KEY_INDEX"])        # api_key_index
+        env["LIGHTER_BASE_URL"],
+        int(env["ACCOUNT_INDEX"]),
+        int(env["API_KEY_INDEX"]),
+        env["API_KEY_PRIVATE_KEY"]
     )
     err = signer.check_client()
     if err:
@@ -1098,12 +1098,12 @@ async def close_both(cfg: AppConfig, env: dict, cross_ticks: int = 10) -> None:
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
     account_api = lighter.AccountApi(api_client)
-    # Use positional args for GitHub SDK (doesn't support keyword args)
+    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
     signer = lighter.SignerClient(
-        env["LIGHTER_BASE_URL"],         # url
-        env["API_KEY_PRIVATE_KEY"],      # api_private_keys
-        int(env["ACCOUNT_INDEX"]),       # account_index
-        int(env["API_KEY_INDEX"])        # api_key_index
+        env["LIGHTER_BASE_URL"],
+        int(env["ACCOUNT_INDEX"]),
+        int(env["API_KEY_INDEX"]),
+        env["API_KEY_PRIVATE_KEY"]
     )
     err = signer.check_client()
     if err:
@@ -1228,12 +1228,12 @@ async def test_leverage_setup(cfg: AppConfig, env: dict) -> None:
     # Build clients
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
-    # Use positional args for GitHub SDK (doesn't support keyword args)
+    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
     signer = lighter.SignerClient(
-        env["LIGHTER_BASE_URL"],         # url
-        env["API_KEY_PRIVATE_KEY"],      # api_private_keys
-        int(env["ACCOUNT_INDEX"]),       # account_index
-        int(env["API_KEY_INDEX"])        # api_key_index
+        env["LIGHTER_BASE_URL"],
+        int(env["ACCOUNT_INDEX"]),
+        int(env["API_KEY_INDEX"]),
+        env["API_KEY_PRIVATE_KEY"]
     )
     err = signer.check_client()
     if err:
@@ -2168,12 +2168,12 @@ async def check_position_status(cfg: AppConfig, env: dict):
 
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
-    # Use positional args for GitHub SDK (doesn't support keyword args)
+    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
     signer = lighter.SignerClient(
-        env["LIGHTER_BASE_URL"],         # url
-        env["API_KEY_PRIVATE_KEY"],      # api_private_keys
-        int(env["ACCOUNT_INDEX"]),       # account_index
-        int(env["API_KEY_INDEX"])        # api_key_index
+        env["LIGHTER_BASE_URL"],
+        int(env["ACCOUNT_INDEX"]),
+        int(env["API_KEY_INDEX"]),
+        env["API_KEY_PRIVATE_KEY"]
     )
 
     try:

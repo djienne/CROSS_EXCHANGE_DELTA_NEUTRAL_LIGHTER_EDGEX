@@ -26,12 +26,12 @@ print("="*70)
 async def cancel_all_via_rest():
     """Cancel all orders using REST API endpoint"""
     try:
-        # Create signer client for authentication using positional args
+        # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
         client = lighter.SignerClient(
-            base_url,      # url
-            private_key,   # api_private_keys
-            account_index, # account_index
-            api_key_index  # api_key_index
+            base_url,
+            account_index,
+            api_key_index,
+            private_key
         )
 
         # Create authentication token
