@@ -49,24 +49,6 @@ def _floor_to_tick(value: float, tick: float) -> float:
     return float((d_value / d_tick).quantize(Decimal('1'), rounding=ROUND_DOWN) * d_tick)
 
 
-def create_signer(base_url: str, private_key: str, account_index: int, api_key_index: int):
-    """
-    Instantiate SignerClient with backwards compatibility for older/newer SDK signatures.
-    """
-    try:
-        return lighter.SignerClient(
-            url=base_url,
-            private_key=private_key,
-            account_index=account_index,
-            api_key_index=api_key_index,
-        )
-    except TypeError as e:
-        # Some SDK versions expect positional args without these keywords
-        if "unexpected keyword argument 'private_key'" in str(e):
-            return lighter.SignerClient(base_url, private_key, api_key_index, account_index)
-        raise
-
-
 def cross_price(side: str, ref_bid: Optional[float], ref_ask: Optional[float], tick: float, cross_pct: float = 3.0) -> float:
     """
     Return an aggressive price based on percentage from mid price.
@@ -693,8 +675,13 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
     try:
         logger.info("Lighter: Canceling all open orders...")
 
-        # Create signer client (handles SDK signature differences)
-        client = create_signer(base_url, private_key, account_index, api_key_index)
+        # Create signer client
+        client = lighter.SignerClient(
+            url=base_url,
+            private_key=private_key,
+            account_index=account_index,
+            api_key_index=api_key_index,
+        )
 
         # Cancel all orders (using time=0 as per market_maker_v2.py)
         tx, tx_hash, err = await client.cancel_all_orders(
