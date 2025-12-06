@@ -42,13 +42,13 @@ async def cancel_orders():
             for order in orders_response.orders:
                 print(f"  Order ID: {order.id}, Symbol: {order.symbol if hasattr(order, 'symbol') else 'SOL'}, Size: {order.size}")
 
-            # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
+            # GitHub SDK signature: SignerClient(url, account_index, api_private_keys, api_key_index)
             print("\nCreating signer client to cancel orders...")
             client = lighter.SignerClient(
                 base_url,
                 account_index,
-                api_key_index,
-                private_key
+                private_key,
+                api_key_index
             )
 
             import time

@@ -29,12 +29,12 @@ async def test_signer_client():
     print("="*70)
 
     try:
-        # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
+        # GitHub SDK signature: SignerClient(url, account_index, api_private_keys, api_key_index)
         client = lighter.SignerClient(
             base_url,
             account_index,
-            api_key_index,
-            private_key
+            private_key,
+            api_key_index
         )
 
         print(f"SignerClient created successfully")

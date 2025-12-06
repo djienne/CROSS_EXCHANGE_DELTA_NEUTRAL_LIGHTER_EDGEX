@@ -916,12 +916,12 @@ async def open_delta_neutral_position(
     # Build clients
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
-    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
+    # Trying: SignerClient(url, account_index, api_private_keys, api_key_index)
     signer = lighter.SignerClient(
         env["LIGHTER_BASE_URL"],
         int(env["ACCOUNT_INDEX"]),
-        int(env["API_KEY_INDEX"]),
-        env["API_KEY_PRIVATE_KEY"]
+        env["API_KEY_PRIVATE_KEY"],
+        int(env["API_KEY_INDEX"])
     )
     err = signer.check_client()
     if err:
@@ -1203,12 +1203,12 @@ async def close_delta_neutral_position(
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
     account_api = lighter.AccountApi(api_client)
-    # GitHub SDK signature: SignerClient(url, account_index, api_key_index, api_private_keys)
+    # Trying: SignerClient(url, account_index, api_private_keys, api_key_index)
     signer = lighter.SignerClient(
         env["LIGHTER_BASE_URL"],
         int(env["ACCOUNT_INDEX"]),
-        int(env["API_KEY_INDEX"]),
-        env["API_KEY_PRIVATE_KEY"]
+        env["API_KEY_PRIVATE_KEY"],
+        int(env["API_KEY_INDEX"])
     )
     err = signer.check_client()
     if err:
