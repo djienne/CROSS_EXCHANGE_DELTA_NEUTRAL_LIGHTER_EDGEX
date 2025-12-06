@@ -68,6 +68,15 @@ class RateLimitError(Exception):
     pass
 
 
+class CloseIncompleteError(Exception):
+    """Raised when one or both legs fail to close fully."""
+
+    def __init__(self, message: str, edgex_size: Optional[float] = None, lighter_size: Optional[float] = None):
+        super().__init__(message)
+        self.edgex_size = edgex_size
+        self.lighter_size = lighter_size
+
+
 # ==================== Rate Limit Handling ====================
 
 def is_rate_limit_error(exc: Exception) -> bool:
@@ -1210,98 +1219,120 @@ async def close_delta_neutral_position(
         stark_private_key=env.get("EDGEX_STARK_PRIVATE_KEY", ""),
     )
 
-    l_market_id, l_price_tick, l_amount_tick = await lighter_client.get_lighter_market_details(order_api, symbol)
-    lighter_bid, lighter_ask = await lighter_client.get_lighter_best_bid_ask(order_api, symbol, l_market_id)
+    try:
+        l_market_id, l_price_tick, l_amount_tick = await lighter_client.get_lighter_market_details(order_api, symbol)
+        lighter_bid, lighter_ask = await lighter_client.get_lighter_best_bid_ask(order_api, symbol, l_market_id)
 
-    contract_name = f"{symbol.upper()}{quote.upper()}"
-    e_contract_id, e_tick_price, e_step_size = await edgex_client.get_edgex_contract_details(edgex, contract_name)
+        contract_name = f"{symbol.upper()}{quote.upper()}"
+        e_contract_id, e_tick_price, e_step_size = await edgex_client.get_edgex_contract_details(edgex, contract_name)
 
-    print(f"\n┌{'─' * 66}┐")
-    print(f"│{'Closing Delta-Neutral Hedge':^66}│")
-    print(f"├{'─' * 66}┤")
-    print(f"│  Symbol: {symbol}/{quote:<4}                                              │")
-    print(f"└{'─' * 66}┘\n")
+        print(f"\n┌{'─' * 66}┐")
+        print(f"│{'Closing Delta-Neutral Hedge':^66}│")
+        print(f"├{'─' * 66}┤")
+        print(f"│  Symbol: {symbol}/{quote:<4}                                              │")
+        print(f"└{'─' * 66}┘\n")
 
-    print("Checking current positions...")
-    edgex_size = await edgex_client.get_edgex_open_size(edgex, e_contract_id)
-    print(f"  EdgeX position:  {edgex_size:+.6f} {symbol}")
+        print("Checking current positions...")
+        edgex_size = await edgex_client.get_edgex_open_size(edgex, e_contract_id)
+        print(f"  EdgeX position:  {edgex_size:+.6f} {symbol}")
 
-    lighter_size = await lighter_client.get_lighter_open_size(account_api, env["ACCOUNT_INDEX"], l_market_id)
-    print(f"  Lighter position: {lighter_size:+.6f} {symbol}")
+        lighter_size = await lighter_client.get_lighter_open_size(account_api, env["ACCOUNT_INDEX"], l_market_id)
+        print(f"  Lighter position: {lighter_size:+.6f} {symbol}")
 
-    print("\nClosing positions on both exchanges...")
-    tasks = []
+        print("\nClosing positions on both exchanges...")
+        tasks = []
 
-    if abs(lighter_size) > l_amount_tick:
-        lighter_close_side = "sell" if lighter_size > 0 else "buy"
-        if lighter_bid or lighter_ask:
-            tasks.append(
-                lighter_client.lighter_close_position(
-                    signer,
-                    l_market_id,
-                    l_price_tick,
-                    l_amount_tick,
-                    lighter_close_side,
-                    abs(lighter_size),
-                    lighter_bid,
-                    lighter_ask,
-                    cross_pct=cross_pct,
+        if abs(lighter_size) > l_amount_tick:
+            lighter_close_side = "sell" if lighter_size > 0 else "buy"
+            if lighter_bid or lighter_ask:
+                tasks.append(
+                    lighter_client.lighter_close_position(
+                        signer,
+                        l_market_id,
+                        l_price_tick,
+                        l_amount_tick,
+                        lighter_close_side,
+                        abs(lighter_size),
+                        lighter_bid,
+                        lighter_ask,
+                        cross_pct=cross_pct,
+                    )
                 )
-            )
+            else:
+                logger.warning("Lighter: No market data available to close position.")
+                print("  Lighter: No market data available, cannot send close order.")
         else:
-            logger.warning("Lighter: No market data available to close position.")
-            print("  Lighter: No market data available, cannot send close order.")
-    else:
-        print("  Lighter: Position already flat or below minimum tick.")
+            print("  Lighter: Position already flat or below minimum tick.")
 
-    tasks.append(
-        edgex_client.close_position(
-            edgex,
-            e_contract_id,
-            e_tick_price,
-            e_step_size,
-            cross_pct=cross_pct,
+        tasks.append(
+            edgex_client.close_position(
+                edgex,
+                e_contract_id,
+                e_tick_price,
+                e_step_size,
+                cross_pct=cross_pct,
+            )
         )
-    )
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    errors = [res for res in results if isinstance(res, Exception)]
-    if errors:
-        print("\n❌ ERROR: One or more close orders failed!")
-        for err_obj in errors:
-            print(f"   - {err_obj}")
-        print("\n⚠️  WARNING: Please verify positions manually.")
-        await signer.close()
-        await api_client.close()
-        await edgex.close()
-        raise RuntimeError("Failed to close positions on one or more venues.")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [res for res in results if isinstance(res, Exception)]
+        if errors:
+            print("\n❌ ERROR: One or more close orders failed!")
+            for err_obj in errors:
+                print(f"   - {err_obj}")
+            print("\n⚠️  WARNING: Please verify positions manually.")
+            raise RuntimeError("Failed to close positions on one or more venues.")
 
-    print("✓ Close orders sent to both exchanges")
+        print("✓ Close orders sent to both exchanges")
 
-    await asyncio.sleep(2)
+        print("\nVerifying closure...")
+        verify_attempts = 0
+        max_verify_attempts = 2
+        wait_seconds = 2
 
-    print("\nVerifying closure...")
-    edgex_size_after = await edgex_client.get_edgex_open_size(edgex, e_contract_id)
-    print(f"  EdgeX position:  {edgex_size_after:+.6f} {symbol}")
-    lighter_size_after = await lighter_client.get_lighter_open_size(account_api, env["ACCOUNT_INDEX"], l_market_id)
-    print(f"  Lighter position: {lighter_size_after:+.6f} {symbol}")
+        while True:
+            await asyncio.sleep(wait_seconds)
 
-    edgex_closed = abs(edgex_size_after) < e_step_size
-    lighter_closed = abs(lighter_size_after) < l_amount_tick
+            edgex_size_after = await edgex_client.get_edgex_open_size(edgex, e_contract_id)
+            lighter_size_after = await lighter_client.get_lighter_open_size(account_api, env["ACCOUNT_INDEX"], l_market_id)
 
-    if edgex_closed and lighter_closed:
-        print("\n✓ Hedge closed successfully on both exchanges!")
-    else:
-        print("\n⚠️  WARNING: One or more positions not fully closed.")
-        if not edgex_closed:
-            print(f"  EdgeX position remaining: {edgex_size_after:+.6f} {symbol}")
-        if not lighter_closed:
-            print(f"  Lighter position remaining: {lighter_size_after:+.6f} {symbol}")
-        print("  Please check both exchanges manually.\n")
+            edgex_closed = abs(edgex_size_after) < e_step_size
+            lighter_closed = abs(lighter_size_after) < l_amount_tick
 
-    await signer.close()
-    await api_client.close()
-    await edgex.close()
+            print(f"  EdgeX position:  {edgex_size_after:+.6f} {symbol}")
+            print(f"  Lighter position: {lighter_size_after:+.6f} {symbol}")
+
+            if edgex_closed and lighter_closed:
+                print("\n✓ Hedge closed successfully on both exchanges!")
+                return {
+                    "edgex_closed": edgex_closed,
+                    "lighter_closed": lighter_closed,
+                    "edgex_size": edgex_size_after,
+                    "lighter_size": lighter_size_after,
+                }
+
+            verify_attempts += 1
+            if verify_attempts > max_verify_attempts:
+                warning_msg = (
+                    f"Closure incomplete after {verify_attempts} checks. "
+                    f"EdgeX={edgex_size_after:+.6f} {symbol}, "
+                    f"Lighter={lighter_size_after:+.6f} {symbol}"
+                )
+                logger.error(warning_msg)
+                print(f"\n⚠️  WARNING: {warning_msg}")
+                raise CloseIncompleteError(warning_msg, edgex_size_after, lighter_size_after)
+
+            wait_seconds = min(wait_seconds * 2, 10)
+            print(f"  Positions still open, re-checking in {wait_seconds}s...")
+
+    finally:
+        try:
+            await signer.close()
+        finally:
+            try:
+                await api_client.close()
+            finally:
+                await edgex.close()
 
 
 class StateManager:
@@ -1830,6 +1861,25 @@ async def scan_all_account_positions(env: dict, config: BotConfig) -> List[dict]
                 await lighter_api_client.close()
             except Exception:
                 pass
+
+
+async def ensure_accounts_flat(env: dict, config: BotConfig) -> None:
+    """
+    Ensure there are no open positions on either exchange before opening a new cycle.
+
+    Raises:
+        RuntimeError: if any open positions are detected.
+    """
+    positions_found = await scan_all_account_positions(env, config)
+    if not positions_found:
+        return
+
+    details = []
+    for pos in positions_found:
+        details.append(f"{pos['symbol']}: EdgeX {pos['edgex_size']:+.6f}, Lighter {pos['lighter_size']:+.6f}")
+
+    detail_msg = "; ".join(details)
+    raise RuntimeError(f"Unexpected open positions detected: {detail_msg}")
 
 
 async def compute_expected_funding(env: dict, config: BotConfig, symbol: str, long_exchange: str) -> dict:
@@ -2426,6 +2476,14 @@ async def close_current_position(state_mgr: StateManager, env: dict):
         display_cycle_summary(cycle_record, stats)
 
         return True
+    except CloseIncompleteError as e:
+        logger.error(f"{Colors.RED}Positions remained open after close attempt: {e}{Colors.RESET}")
+        state_mgr.set_state(BotState.ERROR)
+        state_mgr.state["cumulative_stats"]["last_error"] = str(e)
+        state_mgr.state["cumulative_stats"]["last_error_at"] = utc_now_iso()
+        state_mgr.state["cumulative_stats"]["failed_cycles"] += 1
+        state_mgr.save()
+        return False
 
     except (Exception, SystemExit) as e:
         logger.error(f"{Colors.RED}Failed to close position: {e}{Colors.RESET}", exc_info=True)
@@ -3033,6 +3091,17 @@ class RotationBot:
 
                 # IDLE -> Start new cycle
                 if state == BotState.IDLE:
+                    # Ensure no stray positions exist before starting a new rotation
+                    try:
+                        await ensure_accounts_flat(self.env, config)
+                    except Exception as e:
+                        logger.error(f"{Colors.RED}Unexpected open positions detected while IDLE: {e}{Colors.RESET}")
+                        self.state_mgr.set_state(BotState.ERROR)
+                        self.state_mgr.state["cumulative_stats"]["last_error"] = str(e)
+                        self.state_mgr.state["cumulative_stats"]["last_error_at"] = utc_now_iso()
+                        self.state_mgr.save()
+                        break
+
                     # Update capital status before displaying
                     try:
                         capital_info = await get_available_capital_and_max_position(self.env, config)
