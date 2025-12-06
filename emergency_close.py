@@ -217,11 +217,12 @@ async def emergency_close_all(dry_run=False, cross_ticks=100):
     api_client = lighter.ApiClient(configuration=lighter.Configuration(host=env["LIGHTER_BASE_URL"]))
     order_api = lighter.OrderApi(api_client)
     account_api = lighter.AccountApi(api_client)
+    # Use positional args for GitHub SDK (doesn't support keyword args)
     signer = lighter.SignerClient(
-        url=env["LIGHTER_BASE_URL"],
-        private_key=env["API_KEY_PRIVATE_KEY"],
-        account_index=env["ACCOUNT_INDEX"],
-        api_key_index=env["API_KEY_INDEX"],
+        env["LIGHTER_BASE_URL"],            # url
+        env["API_KEY_PRIVATE_KEY"],         # api_private_keys
+        int(env["ACCOUNT_INDEX"]),          # account_index
+        int(env["API_KEY_INDEX"])           # api_key_index
     )
 
     success_count = 0

@@ -29,12 +29,12 @@ async def test_signer_client():
     print("="*70)
 
     try:
-        # Create signer client
+        # Create signer client using positional args
         client = lighter.SignerClient(
-            url=base_url,
-            private_key=private_key,
-            api_key_index=api_key_index,
-            account_index=account_index
+            base_url,      # url
+            private_key,   # api_private_keys
+            account_index, # account_index
+            api_key_index  # api_key_index
         )
 
         print(f"SignerClient created successfully")

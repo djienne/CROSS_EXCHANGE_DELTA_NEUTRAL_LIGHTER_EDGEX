@@ -26,12 +26,12 @@ print("="*70)
 async def cancel_all_via_rest():
     """Cancel all orders using REST API endpoint"""
     try:
-        # Create signer client for authentication
+        # Create signer client for authentication using positional args
         client = lighter.SignerClient(
-            url=base_url,
-            private_key=private_key,
-            api_key_index=api_key_index,
-            account_index=account_index
+            base_url,      # url
+            private_key,   # api_private_keys
+            account_index, # account_index
+            api_key_index  # api_key_index
         )
 
         # Create authentication token

@@ -675,12 +675,12 @@ async def cancel_all_lighter_orders(env: dict) -> bool:
     try:
         logger.info("Lighter: Canceling all open orders...")
 
-        # Create signer client
+        # Create signer client using positional args (GitHub SDK doesn't support keyword args)
         client = lighter.SignerClient(
-            url=base_url,
-            private_key=private_key,
-            account_index=account_index,
-            api_key_index=api_key_index,
+            base_url,      # url
+            private_key,   # api_private_keys
+            account_index, # account_index
+            api_key_index  # api_key_index
         )
 
         # Cancel all orders (using time=0 as per market_maker_v2.py)
