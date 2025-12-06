@@ -221,8 +221,8 @@ async def emergency_close_all(dry_run=False, cross_ticks=100):
     signer = lighter.SignerClient(
         env["LIGHTER_BASE_URL"],
         int(env["ACCOUNT_INDEX"]),
-        int(env["API_KEY_INDEX"]),
-        env["API_KEY_PRIVATE_KEY"]
+        env["API_KEY_PRIVATE_KEY"],
+        int(env["API_KEY_INDEX"])
     )
 
     success_count = 0
