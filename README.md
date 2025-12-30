@@ -2,6 +2,8 @@
 
 Automated 24/7 funding rate arbitrage bot for cryptocurrency perpetual futures. Opens simultaneous long and short positions across EdgeX and Lighter exchanges to capture funding rate differentials while maintaining market-neutral exposure.
 
+Affiliate link to Support this project : ⚡Trade on Lighter – Spot & Perpetuals, 100% decentralized, no KYC, and ZERO fees – [https://app.lighter.xyz/?referral=FREQTRADE](https://app.lighter.xyz/?referral=FREQTRADE) (I’ll give you 100% kickback with this link)
+
 ## 🎯 Features
 
 - **Fully Automated**: 24/7 operation for scanning, opening, monitoring, and closing delta-neutral positions
