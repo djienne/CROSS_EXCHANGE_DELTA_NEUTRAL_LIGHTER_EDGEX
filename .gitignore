@@ -9,3 +9,7 @@ venv/
 env/
 bot_config.json
 bot_state.json
+
+# Editor/tooling backups - never commit
+*.bak
+*.bak-*

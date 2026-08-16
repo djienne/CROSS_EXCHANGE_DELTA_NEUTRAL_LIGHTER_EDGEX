@@ -9,7 +9,6 @@ modules can interact with both exchanges in a symmetric way.
 """
 
 import logging
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP, ROUND_UP
 from typing import Dict, List, Optional, Tuple
 
 from edgex_sdk import (
@@ -20,36 +19,9 @@ from edgex_sdk import (
     TimeInForce as EdgeXTIF,
 )
 
+from utils import _round_to_tick, _ceil_to_tick, _floor_to_tick
+
 logger = logging.getLogger(__name__)
-
-
-# ==================== Rounding Helpers ====================
-
-def _round_to_tick(value: float, tick: float) -> float:
-    """Round `value` to the nearest multiple of `tick`."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * d_tick)
-
-
-def _ceil_to_tick(value: float, tick: float) -> float:
-    """Round `value` up to the nearest multiple of `tick`."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal("1"), rounding=ROUND_UP) * d_tick)
-
-
-def _floor_to_tick(value: float, tick: float) -> float:
-    """Round `value` down to the nearest multiple of `tick`."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal("1"), rounding=ROUND_DOWN) * d_tick)
 
 
 def cross_price(

@@ -9,10 +9,11 @@ import asyncio
 import json
 import logging
 import time
-from decimal import Decimal, ROUND_DOWN, ROUND_UP, ROUND_HALF_UP
 from typing import Dict, Optional, Tuple
 
 import lighter
+
+from utils import _round_to_tick, _ceil_to_tick, _floor_to_tick
 
 logger = logging.getLogger(__name__)
 
@@ -20,33 +21,6 @@ logger = logging.getLogger(__name__)
 class BalanceFetchError(Exception):
     """Raised when balance retrieval fails."""
     pass
-
-
-def _round_to_tick(value: float, tick: float) -> float:
-    """Round value to nearest tick."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * d_tick)
-
-
-def _ceil_to_tick(value: float, tick: float) -> float:
-    """Round value up to nearest tick."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal('1'), rounding=ROUND_UP) * d_tick)
-
-
-def _floor_to_tick(value: float, tick: float) -> float:
-    """Round value down to nearest tick."""
-    if not tick or tick <= 0:
-        return value
-    d_value = Decimal(str(value))
-    d_tick = Decimal(str(tick))
-    return float((d_value / d_tick).quantize(Decimal('1'), rounding=ROUND_DOWN) * d_tick)
 
 
 def cross_price(side: str, ref_bid: Optional[float], ref_ask: Optional[float], tick: float, cross_pct: float = 3.0) -> float:

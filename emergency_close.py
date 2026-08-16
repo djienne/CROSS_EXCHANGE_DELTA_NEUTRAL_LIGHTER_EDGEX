@@ -24,7 +24,6 @@ import os
 import json
 import platform
 from datetime import datetime, timezone
-from dotenv import load_dotenv
 
 # Check if running on Windows
 if platform.system() == "Windows":
@@ -41,33 +40,20 @@ if platform.system() == "Windows":
     print("\n" + "="*70)
     sys.exit(1)
 
-# Import exchange client modules
+# Import exchange client modules and common utilities
 import lighter_client
 import edgex_client
-
-# Load environment variables
-load_dotenv()
+from utils import load_env as _load_env_base
 
 
 def load_env():
-    """Load and validate environment variables"""
-    env = {}
+    """Load and validate environment variables for emergency close."""
+    env = _load_env_base()
 
-    # EdgeX
-    env["EDGEX_BASE_URL"] = os.getenv("EDGEX_BASE_URL", "https://pro.edgex.exchange")
-    env["EDGEX_ACCOUNT_ID"] = os.getenv("EDGEX_ACCOUNT_ID")
-    env["EDGEX_STARK_PRIVATE_KEY"] = os.getenv("EDGEX_STARK_PRIVATE_KEY")
-
-    # Lighter (with fallbacks)
-    env["LIGHTER_BASE_URL"] = os.getenv("LIGHTER_BASE_URL") or os.getenv("BASE_URL", "https://mainnet.zklighter.elliot.ai")
-    env["API_KEY_PRIVATE_KEY"] = os.getenv("API_KEY_PRIVATE_KEY") or os.getenv("LIGHTER_PRIVATE_KEY")
-    env["ACCOUNT_INDEX"] = int(os.getenv("ACCOUNT_INDEX", os.getenv("LIGHTER_ACCOUNT_INDEX", 0)))
-    env["API_KEY_INDEX"] = int(os.getenv("API_KEY_INDEX", os.getenv("LIGHTER_API_KEY_INDEX", 0)))
-
-    # Validate required fields
-    if not env["EDGEX_ACCOUNT_ID"] or not env["EDGEX_STARK_PRIVATE_KEY"]:
+    # Validate required fields (stricter for emergency close)
+    if not env.get("EDGEX_ACCOUNT_ID") or not env.get("EDGEX_STARK_PRIVATE_KEY"):
         raise ValueError("EdgeX credentials not found in .env file")
-    if not env["API_KEY_PRIVATE_KEY"]:
+    if not env.get("API_KEY_PRIVATE_KEY"):
         raise ValueError("Lighter private key not found in .env file")
 
     return env
