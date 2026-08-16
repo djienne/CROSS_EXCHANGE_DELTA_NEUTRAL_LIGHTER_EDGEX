@@ -2,10 +2,14 @@
 import asyncio
 import sys
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# Add current directory to path so we can import lighter_edgex_hedge
-sys.path.append(os.getcwd())
+# Add THIS project's root so lighter_edgex_hedge imports. Anchored to __file__
+# rather than os.getcwd(): the previous version only worked when pytest happened
+# to be launched from the project directory, and would silently pick up a
+# different project's modules when launched from elsewhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Mock dependencies before importing lighter_edgex_hedge
 sys.modules['edgex_client'] = MagicMock()

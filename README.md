@@ -33,6 +33,11 @@ Affiliate link to Support this project : ⚡Trade on Lighter – Spot & Perpetua
 - **`edgex_client.py`**: EdgeX exchange helper functions
 - **`emergency_close.py`**: Emergency position closer (Linux/macOS only)
 
+### Shared Modules
+
+- **`utils.py`**: Common utilities (rounding, env loading, datetime, math helpers)
+- **`bot_state.py`**: State management (BotState, BotConfig, StateManager, display functions)
+
 ### Configuration
 
 - **`bot_config.json`**: Automated bot configuration

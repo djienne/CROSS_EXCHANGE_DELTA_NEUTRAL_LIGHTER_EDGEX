@@ -1,10 +1,4 @@
 version: '3.8'
-networks:
-  default:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.58.96.0/22
 services:
   lighter_edgex_hedge:
     build: .
